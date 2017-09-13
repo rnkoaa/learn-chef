@@ -15,6 +15,9 @@ Vagrant.configure("2") do |config|
     workstation.vm.synced_folder "./data/workstation", "/vagrant_data"
 
 
+    config.vm.provision "file", source: "./data/ssh/id_rsa", destination: "$HOME/.ssh/id_rsa"
+    config.vm.provision "file", source: "./data/ssh/id_rsa.pub", destination: "$HOME/.ssh/id_rsa.pub"
+
     workstation.vm.provision "shell", inline: <<-SHELL
       echo "export VAGRANT_DATA=/vagrant_data" >> ~/.bash_profile
       echo "export CHEF_REPO=/home/vagrant/chef-repo" >> ~/.bash_profile
@@ -23,19 +26,19 @@ Vagrant.configure("2") do |config|
       # Are available to the current
       source ~/.bash_profile
 
-      git config --global user.email "vagrant@vagrant.com"
-      git config --global user.name "Vagrant"
-
-      SSH_DIRECTORY="/home/vagrant/.ssh"
-      if [ ! -d "$SSH_DIRECTORY" ]; then
-        # Control will enter here if $DIRECTORY doesn't exist.
-        mkdir /home/vagrant/.ssh
-      fi
+      # SSH_DIRECTORY="/home/vagrant/.ssh"
+      # if [ ! -d "$SSH_DIRECTORY" ]; then
+      #   # Control will enter here if $DIRECTORY doesn't exist.
+      #   mkdir /home/vagrant/.ssh
+      # fi
 
       # copy ssh keys for this user
-      cp /vagrant_data/ssh/* /home/vagrant/.ssh
+      # cp /vagrant_data/ssh/* /home/vagrant/.ssh
 
       yum update && yum install -y vim wget git zip unzip tree
+
+      git config --global user.email "vagrant@vagrant.com"
+      git config --global user.name "Vagrant"
 
       file="/home/vagrant/.vimrc"
       if [ -f "$file" ]
@@ -57,15 +60,27 @@ Vagrant.configure("2") do |config|
     SHELL
   end
 
-ssh_pub_key = File.readlines("data/node_1/ssh/id_rsa.pub").first.strip
+  id_rsa_key_pub = File.readlines("./data/ssh/id_rsa.pub").first.strip
+  # echo "#{ssh_pub_key}" >> /home/vagrant/.ssh/authorized_keys
+  # echo "#{ssh_pub_key}" >> /root/.ssh/authorized_keys
 
   config.vm.define "node" do |node|
     node.vm.box = "centos/7"
     node.vm.hostname = "node1"
     node.vm.network "private_network", ip: "192.168.33.20"
+
+    node.vm.network "forwarded_port", guest: 9200, host: 9200
+    node.vm.network "forwarded_port", guest: 9300, host: 9300
+    node.vm.network "forwarded_port", guest: 5601, host: 5601
+    node.vm.network "forwarded_port", guest: 5000, host: 5000
+
     node.vm.synced_folder "./data/node_1", "/vagrant_data"
 
     node.vm.provision "shell", inline: <<-SHELL
+      # Disable firewall
+      sudo systemctl stop firewalld
+      sudo systemctl disable firewalld
+
       echo "export VAGRANT_DATA=/vagrant_data" >> ~/.bash_profile
       echo "export CHEF_REPO=/home/vagrant/chef-repo" >> ~/.bash_profile
 
@@ -75,23 +90,21 @@ ssh_pub_key = File.readlines("data/node_1/ssh/id_rsa.pub").first.strip
 
       # Add the workstation's public key as authorized
       # Allows the workstation to ssh into this node.
-      SSH_DIRECTORY="/home/vagrant/.ssh"
-      if [ ! -d "$SSH_DIRECTORY" ]; then
+      VAGRANT_SSH_DIRECTORY="/home/vagrant/.ssh"
+      if [ ! -d "$VAGRANT_SSH_DIRECTORY" ]; then
         # Control will enter here if $DIRECTORY doesn't exist.
         mkdir /home/vagrant/.ssh
       fi
 
+      ROOT_SSH_DIRECTORY="/root/.ssh"
+      if [ ! -d "$ROOT_SSH_DIRECTORY" ]; then
+        # Control will enter here if $DIRECTORY doesn't exist.
+        mkdir /root/.ssh
+      fi
 
-      # cat /vagrant_data/ssh/id_rsa.pub | tee -ai /home/vagrant/.ssh/authorized_keys
-      # mkdir /root/.ssh && sudo cat /vagrant_data/ssh/id_rsa.pub | tee -ai /root/.ssh/authorized_keys
-
-      # This works.
-      echo "\n" >> /home/vagrant/.ssh/authorized_keys && cat /vagrant_data/ssh/id_rsa.pub >> /home/vagrant/.ssh/authorized_keys
-      mkdir /root/.ssh && echo "\n" >> /root/.ssh/authorized_keys && sudo cat /vagrant_data/ssh/id_rsa.pub >> /root/.ssh/authorized_keys
-
-      # "not yet tested."
-      # echo "#{ssh_pub_key}" >> /home/vagrant/.ssh/authorized_keys
-      # echo "#{ssh_pub_key}" >> /root/.ssh/authorized_keys
+      echo 'appending SSH Pub Key to ~vagrant/.ssh/authorized_keys' \
+        && echo '\n#{id_rsa_key_pub }' >> /home/vagrant/.ssh/authorized_keys \
+        && chmod 600 /home/vagrant/.ssh/authorized_keys
 
        yum update && yum install -y vim wget git zip unzip tree
 
