@@ -1,0 +1,121 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box_check_update = false
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = "1024"
+  end
+
+  config.vm.define "workstation" do |workstation|
+    workstation.vm.box = "centos/7"
+    workstation.vm.hostname = "workstation"
+    workstation.vm.network "private_network", ip: "192.168.33.10"
+    workstation.vm.synced_folder "./data/workstation", "/vagrant_data"
+
+
+    config.vm.provision "file", source: "./data/ssh/id_rsa", destination: "$HOME/.ssh/id_rsa"
+    config.vm.provision "file", source: "./data/ssh/id_rsa.pub", destination: "$HOME/.ssh/id_rsa.pub"
+
+    workstation.vm.provision "shell", inline: <<-SHELL
+      echo "export VAGRANT_DATA=/vagrant_data" >> ~/.bash_profile
+      echo "export CHEF_REPO=/home/vagrant/chef-repo" >> ~/.bash_profile
+
+      # Reload the bash_profile file so the environment variables
+      # Are available to the current
+      source ~/.bash_profile
+
+      # SSH_DIRECTORY="/home/vagrant/.ssh"
+      # if [ ! -d "$SSH_DIRECTORY" ]; then
+      #   # Control will enter here if $DIRECTORY doesn't exist.
+      #   mkdir /home/vagrant/.ssh
+      # fi
+
+      # copy ssh keys for this user
+      # cp /vagrant_data/ssh/* /home/vagrant/.ssh
+
+      yum update && yum install -y vim wget git zip unzip tree
+
+      git config --global user.email "vagrant@vagrant.com"
+      git config --global user.name "Vagrant"
+
+      file="/home/vagrant/.vimrc"
+      if [ -f "$file" ]
+      then
+      	echo ".vimrc exists, will not download again."
+      else
+        wget https://raw.githubusercontent.com/amix/vimrc/master/vimrcs/basic.vim
+        cp basic.vim /home/vagrant/.vimrc
+      fi
+
+      # download chef dk
+      yum install -y  https://packages.chef.io/files/stable/chefdk/2.2.1/el/7/chefdk-2.2.1-1.el7.x86_64.rpm
+
+      # use the ruby that came with chef
+      echo 'eval "$(chef shell-init bash)"' >> ~/.bash_profile
+
+      # reload the environment for it to take control
+      source .bash_profile
+    SHELL
+  end
+
+  id_rsa_key_pub = File.readlines("./data/ssh/id_rsa.pub").first.strip
+  # echo "#{ssh_pub_key}" >> /home/vagrant/.ssh/authorized_keys
+  # echo "#{ssh_pub_key}" >> /root/.ssh/authorized_keys
+
+  config.vm.define "node" do |node|
+    node.vm.box = "centos/7"
+    node.vm.hostname = "node1"
+    node.vm.network "private_network", ip: "192.168.33.20"
+
+    node.vm.network "forwarded_port", guest: 9200, host: 9200
+    node.vm.network "forwarded_port", guest: 9300, host: 9300
+    node.vm.network "forwarded_port", guest: 5601, host: 5601
+    node.vm.network "forwarded_port", guest: 5000, host: 5000
+
+    node.vm.synced_folder "./data/node_1", "/vagrant_data"
+
+    node.vm.provision "shell", inline: <<-SHELL
+      # Disable firewall
+      sudo systemctl stop firewalld
+      sudo systemctl disable firewalld
+
+      echo "export VAGRANT_DATA=/vagrant_data" >> ~/.bash_profile
+      echo "export CHEF_REPO=/home/vagrant/chef-repo" >> ~/.bash_profile
+
+      # Reload the bash_profile file so the environment variables
+      # Are available to the current
+      source ~/.bash_profile
+
+      # Add the workstation's public key as authorized
+      # Allows the workstation to ssh into this node.
+      VAGRANT_SSH_DIRECTORY="/home/vagrant/.ssh"
+      if [ ! -d "$VAGRANT_SSH_DIRECTORY" ]; then
+        # Control will enter here if $DIRECTORY doesn't exist.
+        mkdir /home/vagrant/.ssh
+      fi
+
+      ROOT_SSH_DIRECTORY="/root/.ssh"
+      if [ ! -d "$ROOT_SSH_DIRECTORY" ]; then
+        # Control will enter here if $DIRECTORY doesn't exist.
+        mkdir /root/.ssh
+      fi
+
+      echo 'appending SSH Pub Key to ~vagrant/.ssh/authorized_keys' \
+        && echo '\n#{id_rsa_key_pub }' >> /home/vagrant/.ssh/authorized_keys \
+        && chmod 600 /home/vagrant/.ssh/authorized_keys
+
+       yum update && yum install -y vim wget git zip unzip tree
+
+       file="/home/vagrant/.vimrc"
+       if [ -f "$file" ]
+       then
+       	echo ".vimrc exists, will not download again."
+       else
+         wget https://raw.githubusercontent.com/amix/vimrc/master/vimrcs/basic.vim
+         cp basic.vim /home/vagrant/.vimrc
+       fi
+    SHELL
+  end
+end
